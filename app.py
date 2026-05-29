@@ -1,7 +1,7 @@
 import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+import time
 
 # ─────────────────────────────────────────────
 # PAGE CONFIG
@@ -13,64 +13,6 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────
-# CUSTOM CSS
-# ─────────────────────────────────────────────
-st.markdown("""
-<style>
-    /* Dark background throughout */
-    .stApp { background-color: #0d0d0d; color: white; }
-    [data-testid="stSidebar"] { background-color: #141414; border-right: 1px solid #2a2a2a; }
-
-    /* Header */
-    .main-title {
-        text-align: center;
-        font-size: 2.2rem;
-        font-weight: 900;
-        color: white;
-        letter-spacing: 2px;
-        margin-bottom: 0;
-        padding-bottom: 0;
-    }
-    .main-subtitle {
-        text-align: center;
-        font-size: 1rem;
-        color: #888;
-        font-style: italic;
-        margin-top: 4px;
-        margin-bottom: 24px;
-    }
-
-    /* Result cards */
-    .result-card {
-        background: #1a1a1a;
-        border-radius: 12px;
-        padding: 16px 20px;
-        margin: 6px 0;
-        border-left: 4px solid;
-    }
-    .card-label { font-size: 0.78rem; color: #888; text-transform: uppercase; letter-spacing: 1px; }
-    .card-value { font-size: 1.7rem; font-weight: 800; }
-    .card-sub   { font-size: 0.82rem; color: #aaa; margin-top: 2px; }
-
-    /* Method description box */
-    .method-box {
-        background: #1a1a1a;
-        border-radius: 10px;
-        padding: 14px 18px;
-        border: 1px solid #2a2a2a;
-        margin-bottom: 10px;
-    }
-
-    /* Sidebar labels */
-    .stSlider label, .stRadio label { color: #ccc !important; font-size: 0.9rem !important; }
-    
-    /* Hide default streamlit footer */
-    footer { visibility: hidden; }
-    #MainMenu { visibility: hidden; }
-</style>
-""", unsafe_allow_html=True)
-
-# ─────────────────────────────────────────────
 # CONSTANTS
 # ─────────────────────────────────────────────
 RADIUS      = 1.0
@@ -78,37 +20,35 @@ SIDE_LENGTH = np.sqrt(3) * RADIUS   # ≈ 1.732
 
 METHOD_INFO = {
     "Random Endpoints": {
-        "color":  "#FF6B6B",
+        "color":  "#FF5C5C",
         "theory": 1/3,
-        "desc":   "Pick 2 random points on the circumference → connect them.",
-        "why":    "P = 1/3  —  The 2nd point must land in a specific 1/3 arc.",
-        "emoji":  "🔴",
+        "desc":   "Pick 2 random points on the circumference, connect them.",
+        "why":    "P = 1/3 — the 2nd point must land in a specific 1/3 arc.",
     },
     "Random Radius": {
         "color":  "#4ECDC4",
         "theory": 1/2,
-        "desc":   "Pick a random radius direction, then a random distance along it → draw perpendicular chord.",
-        "why":    "P = 1/2  —  Only the inner half of the radius gives a long chord.",
-        "emoji":  "🟢",
+        "desc":   "Pick a random radius, a random point on it, draw the perpendicular chord.",
+        "why":    "P = 1/2 — only the inner half of the radius gives a long chord.",
     },
     "Random Midpoint": {
-        "color":  "#FFE66D",
+        "color":  "#FFD93D",
         "theory": 1/4,
-        "desc":   "Pick a random point inside the circle → it becomes the chord's midpoint.",
-        "why":    "P = 1/4  —  Only 1/4 of the disk area gives a long chord.",
-        "emoji":  "🟡",
+        "desc":   "Pick a random point inside the disk; it becomes the chord's midpoint.",
+        "why":    "P = 1/4 — only 1/4 of the disk area gives a long chord.",
     },
 }
 
 # ─────────────────────────────────────────────
-# CHORD GENERATION
+# CHORD GENERATION  (returns endpoints, midpoints, lengths)
 # ─────────────────────────────────────────────
 def method_endpoints(n, rng):
     t1 = rng.uniform(0, 2*np.pi, n)
     t2 = rng.uniform(0, 2*np.pi, n)
     x1, y1 = np.cos(t1), np.sin(t1)
     x2, y2 = np.cos(t2), np.sin(t2)
-    return x1, y1, x2, y2, np.sqrt((x2-x1)**2 + (y2-y1)**2)
+    mx, my = (x1+x2)/2, (y1+y2)/2
+    return x1, y1, x2, y2, mx, my, np.sqrt((x2-x1)**2 + (y2-y1)**2)
 
 def method_radius(n, rng):
     t = rng.uniform(0, 2*np.pi, n)
@@ -116,7 +56,8 @@ def method_radius(n, rng):
     half = np.sqrt(RADIUS**2 - d**2)
     mx, my = d*np.cos(t), d*np.sin(t)
     px, py = -np.sin(t), np.cos(t)
-    return mx+half*px, my+half*py, mx-half*px, my-half*py, 2*half
+    return (mx+half*px, my+half*py, mx-half*px, my-half*py,
+            mx, my, 2*half)
 
 def method_midpoint(n, rng):
     pts = []
@@ -133,7 +74,8 @@ def method_midpoint(n, rng):
     safe = r > 1e-10
     px   = np.where(safe, -my/np.where(safe, r, 1), 1.0)
     py   = np.where(safe,  mx/np.where(safe, r, 1), 0.0)
-    return mx+half*px, my+half*py, mx-half*px, my-half*py, 2*half
+    return (mx+half*px, my+half*py, mx-half*px, my-half*py,
+            mx, my, 2*half)
 
 METHODS = {
     "Random Endpoints": method_endpoints,
@@ -142,340 +84,279 @@ METHODS = {
 }
 
 # ─────────────────────────────────────────────
-# SIDEBAR CONTROLS
+# CIRCLE FIGURE BUILDER
+# Wikipedia-style: thin chords, grey triangle, red=long blue=short
+# ─────────────────────────────────────────────
+def build_circle_figure(method_name, x1, y1, x2, y2, mx, my, favorable,
+                         n_show, show_midpoints):
+    color = METHOD_INFO[method_name]["color"]
+    theta = np.linspace(0, 2*np.pi, 300)
+
+    fig = go.Figure()
+
+    # Circle boundary
+    fig.add_trace(go.Scatter(
+        x=np.cos(theta), y=np.sin(theta),
+        mode="lines", line=dict(color="#cccccc", width=2),
+        showlegend=False, hoverinfo="skip"))
+
+    # Inscribed triangle (grey, like Wikipedia)
+    tri = np.array([np.pi/2, np.pi/2+2*np.pi/3, np.pi/2+4*np.pi/3, np.pi/2])
+    fig.add_trace(go.Scatter(
+        x=np.cos(tri), y=np.sin(tri),
+        mode="lines", line=dict(color="#888888", width=1.5),
+        fill="toself", fillcolor="rgba(150,150,150,0.12)",
+        showlegend=False, hoverinfo="skip"))
+
+    # Split favorable / unfavorable up to n_show
+    idx = np.arange(n_show)
+    fav = idx[favorable[:n_show]]
+    unf = idx[~favorable[:n_show]]
+
+    # Short chords (blue) — thin
+    bx, by = [], []
+    for i in unf:
+        bx += [x1[i], x2[i], None]; by += [y1[i], y2[i], None]
+    if bx:
+        fig.add_trace(go.Scatter(
+            x=bx, y=by, mode="lines",
+            line=dict(color="#5B8DEF", width=0.6),
+            name="Short (< √3)", hoverinfo="skip"))
+
+    # Long chords (red) — thin
+    rx, ry = [], []
+    for i in fav:
+        rx += [x1[i], x2[i], None]; ry += [y1[i], y2[i], None]
+    if rx:
+        fig.add_trace(go.Scatter(
+            x=rx, y=ry, mode="lines",
+            line=dict(color="#FF5C5C", width=0.6),
+            name="Long (> √3)", hoverinfo="skip"))
+
+    # Optional midpoint cloud
+    if show_midpoints:
+        fig.add_trace(go.Scatter(
+            x=mx[:n_show][favorable[:n_show]],
+            y=my[:n_show][favorable[:n_show]],
+            mode="markers",
+            marker=dict(color="#FF5C5C", size=3, opacity=0.7),
+            name="Long midpoint", hoverinfo="skip"))
+        fig.add_trace(go.Scatter(
+            x=mx[:n_show][~favorable[:n_show]],
+            y=my[:n_show][~favorable[:n_show]],
+            mode="markers",
+            marker=dict(color="#5B8DEF", size=3, opacity=0.7),
+            name="Short midpoint", hoverinfo="skip"))
+        # r/2 reference circle
+        fig.add_trace(go.Scatter(
+            x=0.5*np.cos(theta), y=0.5*np.sin(theta),
+            mode="lines", line=dict(color="#FFD93D", width=1, dash="dot"),
+            name="r/2 boundary", hoverinfo="skip"))
+
+    fig.update_layout(
+        paper_bgcolor="#0d0d0d", plot_bgcolor="#0d0d0d",
+        height=620,  # large — about half the page
+        margin=dict(l=10, r=10, t=10, b=10),
+        xaxis=dict(range=[-1.15, 1.15], showgrid=False, zeroline=False,
+                   showticklabels=False, scaleanchor="y"),
+        yaxis=dict(range=[-1.15, 1.15], showgrid=False, zeroline=False,
+                   showticklabels=False),
+        legend=dict(x=0.5, y=-0.02, xanchor="center", orientation="h",
+                    bgcolor="rgba(20,20,20,0.8)", bordercolor="#333",
+                    borderwidth=1, font=dict(color="white", size=11)),
+        showlegend=True)
+    return fig
+
+# ─────────────────────────────────────────────
+# SIDEBAR
 # ─────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## ⚙️ Controls")
     st.markdown("---")
 
-    method_name = st.radio(
-        "Select Method",
-        list(METHODS.keys()),
-        index=0,
-    )
+    method_name = st.radio("Method", list(METHODS.keys()), index=0)
+    n_chords    = st.slider("Number of Chords", 10, 1500, 300, step=10)
+    seed        = st.slider("Random Seed", 0, 100, 42, step=1)
 
     st.markdown("---")
-
-    n_chords = st.slider("Number of Chords", 10, 2000, 100, step=10)
-    seed     = st.slider("Random Seed", 0, 100, 42, step=1)
-
-    regenerate = st.button("⟳  Regenerate", use_container_width=True, type="primary")
-    if regenerate:
-        seed = (seed + 1) % 101
-        st.rerun()
+    st.markdown("#### ✨ Unique Features")
+    animate        = st.checkbox("▶ Animate chords drawing in", value=False)
+    anim_speed     = st.select_slider("Animation speed",
+                        options=["Slow", "Medium", "Fast"], value="Medium")
+    show_midpoints = st.checkbox("◉ Show chord midpoints", value=False,
+                        help="Reveals WHY the methods differ — midpoint density")
 
     st.markdown("---")
-
     info = METHOD_INFO[method_name]
-    st.markdown(f"""
-    <div class="method-box">
-        <div style="font-size:1rem; font-weight:700; color:{info['color']}; margin-bottom:6px;">
-            {info['emoji']} {method_name}
-        </div>
-        <div style="font-size:0.85rem; color:#ccc; margin-bottom:8px;">{info['desc']}</div>
-        <div style="font-size:0.85rem; color:{info['color']}; font-weight:600;">{info['why']}</div>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(f"**{method_name}**")
+    st.caption(info["desc"])
+    st.markdown(f"<span style='color:{info['color']};font-weight:600'>{info['why']}</span>",
+                unsafe_allow_html=True)
 
-    st.markdown("""
-    <div style="color:#555; font-size:0.75rem; text-align:center; margin-top:20px;">
-        Circle radius r = 1<br>
-        Threshold = √3 ≈ 1.732<br>
-        (side of inscribed equilateral triangle)
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown("---")
+    st.caption("Circle r = 1 · Threshold √3 ≈ 1.732\n\nInscribed equilateral triangle side")
 
 # ─────────────────────────────────────────────
 # GENERATE DATA
 # ─────────────────────────────────────────────
 rng = np.random.default_rng(seed)
-x1, y1, x2, y2, lengths = METHODS[method_name](n_chords, rng)
-favorable  = lengths > SIDE_LENGTH
-prob       = favorable.mean()
-theory     = METHOD_INFO[method_name]["theory"]
-color      = METHOD_INFO[method_name]["color"]
-n_fav      = favorable.sum()
-n_unfav    = (~favorable).sum()
+x1, y1, x2, y2, mx, my, lengths = METHODS[method_name](n_chords, rng)
+favorable = lengths > SIDE_LENGTH
+prob      = favorable.mean()
+theory    = METHOD_INFO[method_name]["theory"]
+color     = METHOD_INFO[method_name]["color"]
 
 # ─────────────────────────────────────────────
 # HEADER
 # ─────────────────────────────────────────────
-st.markdown('<div class="main-title">BERTRAND\'S PARADOX — INTERACTIVE SIMULATOR</div>', unsafe_allow_html=True)
-st.markdown('<div class="main-subtitle">Same question · Three different methods · Three different answers</div>', unsafe_allow_html=True)
+st.markdown(
+    "<h1 style='text-align:center;letter-spacing:2px;'>BERTRAND'S PARADOX</h1>"
+    "<p style='text-align:center;color:#888;font-style:italic;margin-top:-10px;'>"
+    "Same question · three definitions of random · three different answers</p>",
+    unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
-# RESULT CARDS  (top row)
+# MAIN LAYOUT: big circle (left) | stats + animation (right)
 # ─────────────────────────────────────────────
-c1, c2, c3, c4, c5 = st.columns(5)
+col_circle, col_side = st.columns([1.1, 0.9])
 
-def card(col, label, value, sub, color):
-    col.markdown(f"""
-    <div class="result-card" style="border-left-color:{color}">
-        <div class="card-label">{label}</div>
-        <div class="card-value" style="color:{color}">{value}</div>
-        <div class="card-sub">{sub}</div>
-    </div>
-    """, unsafe_allow_html=True)
+# Right side: live stats placeholders
+with col_side:
+    st.markdown(f"### {method_name}")
+    stat_prob   = st.empty()
+    stat_counts = st.empty()
+    prog        = st.empty()
 
-card(c1, "Method",        method_name.split()[1],  method_name,              color)
-card(c2, "Total Chords",  f"{n_chords:,}",          "simulated",              "#888")
-card(c3, "Favorable",     f"{n_fav:,}",             f"{100*prob:.1f}%  long", color)
-card(c4, "Simulated P",   f"{prob:.4f}",            f"theory = {theory:.4f}", color)
-card(c5, "|Error|",       f"{abs(prob-theory):.4f}", "vs theoretical",        "#888" if abs(prob-theory) < 0.05 else "#FF6B6B")
-
-st.markdown("<br>", unsafe_allow_html=True)
+with col_circle:
+    circle_slot = st.empty()
 
 # ─────────────────────────────────────────────
-# PLOTS
+# ANIMATION  vs  STATIC RENDER
 # ─────────────────────────────────────────────
-col_left, col_right = st.columns([1, 1])
+def render_stats(n_shown, fav_count):
+    p = fav_count / n_shown if n_shown else 0
+    stat_prob.markdown(
+        f"<div style='font-size:3rem;font-weight:800;color:{color};'>"
+        f"P = {p:.4f}</div>"
+        f"<div style='color:#888;margin-top:-8px;'>theoretical = {theory:.4f} "
+        f"&nbsp;|&nbsp; error = {abs(p-theory):.4f}</div>",
+        unsafe_allow_html=True)
+    stat_counts.markdown(
+        f"**Chords drawn:** {n_shown:,}  \n"
+        f"**Long (> √3):** {fav_count:,} ({100*p:.1f}%)  \n"
+        f"**Short (< √3):** {n_shown-fav_count:,} ({100*(1-p):.1f}%)")
 
-# ══════════════════
-# LEFT: Circle Plot
-# ══════════════════
-with col_left:
-    theta = np.linspace(0, 2*np.pi, 300)
+if animate:
+    delays = {"Slow": 0.06, "Medium": 0.025, "Fast": 0.008}
+    delay  = delays[anim_speed]
+    # Draw in batches for smoothness (animate up to 300 frames max)
+    n_anim = min(n_chords, 300)
+    step   = max(1, n_anim // 60)   # ~60 frames
+    cum_fav = np.cumsum(favorable)
+    for k in range(step, n_anim + step, step):
+        k = min(k, n_anim)
+        fig = build_circle_figure(method_name, x1, y1, x2, y2, mx, my,
+                                  favorable, k, show_midpoints)
+        circle_slot.plotly_chart(fig, use_container_width=True,
+                                  key=f"anim_{k}")
+        render_stats(k, int(cum_fav[k-1]))
+        prog.progress(k / n_anim)
+        time.sleep(delay)
+    prog.empty()
+    # Final full render with all chords
+    fig = build_circle_figure(method_name, x1, y1, x2, y2, mx, my,
+                              favorable, min(n_chords, 300), show_midpoints)
+    circle_slot.plotly_chart(fig, use_container_width=True, key="anim_final")
+    render_stats(n_chords, int(favorable.sum()))
+else:
+    n_show = min(n_chords, 300)
+    fig = build_circle_figure(method_name, x1, y1, x2, y2, mx, my,
+                              favorable, n_show, show_midpoints)
+    circle_slot.plotly_chart(fig, use_container_width=True, key="static")
+    render_stats(n_chords, int(favorable.sum()))
 
-    fig_circle = go.Figure()
+# ─────────────────────────────────────────────
+# LOWER ROW: convergence + histogram
+# ─────────────────────────────────────────────
+st.markdown("---")
+c1, c2 = st.columns(2)
 
-    # Circle boundary
-    fig_circle.add_trace(go.Scatter(
-        x=np.cos(theta), y=np.sin(theta),
-        mode="lines", line=dict(color="white", width=2.5),
-        showlegend=False, hoverinfo="skip"
-    ))
-
-    # Inscribed triangle
-    tri_angles = np.array([np.pi/2, np.pi/2 + 2*np.pi/3, np.pi/2 + 4*np.pi/3, np.pi/2])
-    fig_circle.add_trace(go.Scatter(
-        x=np.cos(tri_angles), y=np.sin(tri_angles),
-        mode="lines",
-        line=dict(color="#666", width=1.5, dash="dash"),
-        fill="toself", fillcolor="rgba(100,100,100,0.1)",
-        name="Inscribed Triangle  (side = √3)",
-        hoverinfo="skip"
-    ))
-
-    # Limit display to 150 chords
-    n_display   = min(n_chords, 150)
-    fav_idx     = np.where(favorable[:n_display])[0]
-    unfav_idx   = np.where(~favorable[:n_display])[0]
-
-    # Unfavorable chords (dark, thin)
-    for i in unfav_idx:
-        fig_circle.add_trace(go.Scatter(
-            x=[x1[i], x2[i], None], y=[y1[i], y2[i], None],
-            mode="lines", line=dict(color="#2a2a2a", width=0.8),
-            showlegend=False, hoverinfo="skip"
-        ))
-
-    # Favorable chords — batch into one trace using None separators
-    fx, fy = [], []
-    for i in fav_idx:
-        fx += [x1[i], x2[i], None]
-        fy += [y1[i], y2[i], None]
-    if fx:
-        fig_circle.add_trace(go.Scatter(
-            x=fx, y=fy,
-            mode="lines",
-            line=dict(color=color, width=1.5),
-            name=f"Long chord  (> √3)",
-            hoverinfo="skip"
-        ))
-
-    # One dummy trace for the unfavorable legend entry
-    fig_circle.add_trace(go.Scatter(
-        x=[None], y=[None],
-        mode="lines", line=dict(color="#444", width=2),
-        name="Short chord  (< √3)"
-    ))
-
-    fig_circle.update_layout(
-        title=dict(
-            text=f"<b>{method_name.upper()}</b>",
-            font=dict(color=color, size=16),
-            x=0.5
-        ),
-        paper_bgcolor="#0d0d0d",
-        plot_bgcolor="#0d0d0d",
-        height=480,
-        margin=dict(l=10, r=10, t=50, b=10),
-        xaxis=dict(range=[-1.45, 1.45], showgrid=False, zeroline=False,
-                   showticklabels=False, scaleanchor="y"),
-        yaxis=dict(range=[-1.45, 1.45], showgrid=False, zeroline=False,
-                   showticklabels=False),
-        legend=dict(
-            x=0.01, y=0.01,
-            bgcolor="rgba(20,20,20,0.9)",
-            bordercolor="#444", borderwidth=1,
-            font=dict(color="white", size=11)
-        ),
-        showlegend=True,
-    )
-
-    st.plotly_chart(fig_circle, use_container_width=True)
-
-# ═══════════════════════════════
-# RIGHT: Convergence + Histogram
-# ═══════════════════════════════
-with col_right:
-
-    # Convergence
-    running_prob = np.cumsum(favorable) / np.arange(1, n_chords+1)
-    trials       = np.arange(1, n_chords+1)
-
-    fig_conv = go.Figure()
-
-    # Shaded band around theory
-    fig_conv.add_trace(go.Scatter(
-        x=np.concatenate([trials, trials[::-1]]),
-        y=np.concatenate([np.full(n_chords, theory+0.05),
-                          np.full(n_chords, theory-0.05)[::-1]]),
-        fill="toself", fillcolor=f"rgba{tuple(int(color.lstrip('#')[i:i+2],16) for i in (0,2,4)) + (0.12,)}",
-        line=dict(width=0), showlegend=False, hoverinfo="skip"
-    ))
-
-    fig_conv.add_trace(go.Scatter(
-        x=trials, y=running_prob,
-        mode="lines", line=dict(color=color, width=2),
-        name="Simulated"
-    ))
-
-    fig_conv.add_hline(
-        y=theory, line_dash="dash", line_color="white", line_width=1.5,
-        annotation_text=f"Theory = {theory:.4f}",
-        annotation_font_color="white", annotation_font_size=11
-    )
-
-    fig_conv.update_layout(
+with c1:
+    running = np.cumsum(favorable) / np.arange(1, n_chords+1)
+    f = go.Figure()
+    f.add_trace(go.Scatter(y=running, mode="lines",
+                line=dict(color=color, width=2), name="Simulated"))
+    f.add_hline(y=theory, line_dash="dash", line_color="white",
+                annotation_text=f"Theory = {theory:.4f}",
+                annotation_font_color="white")
+    f.update_layout(
         title=dict(text="<b>Probability Convergence</b>",
                    font=dict(color="white", size=14), x=0.5),
-        paper_bgcolor="#0d0d0d", plot_bgcolor="#0d0d0d",
-        height=220, margin=dict(l=40, r=20, t=40, b=30),
-        xaxis=dict(title="Number of Trials", color="#999",
-                   gridcolor="#1a1a1a", showline=True, linecolor="#444"),
-        yaxis=dict(title="P(length > √3)", color="#999",
-                   gridcolor="#1a1a1a", showline=True, linecolor="#444"),
-        legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(color="white", size=10)),
-        font=dict(color="#999"),
-    )
+        paper_bgcolor="#0d0d0d", plot_bgcolor="#0d0d0d", height=300,
+        margin=dict(l=40, r=20, t=40, b=30),
+        xaxis=dict(title="Trials", color="#999", gridcolor="#1a1a1a"),
+        yaxis=dict(title="P(length > √3)", color="#999", gridcolor="#1a1a1a"),
+        legend=dict(font=dict(color="white"), bgcolor="rgba(0,0,0,0)"),
+        font=dict(color="#999"))
+    st.plotly_chart(f, use_container_width=True, key="conv")
 
-    st.plotly_chart(fig_conv, use_container_width=True)
-
-    # Histogram
-    fig_hist = go.Figure()
-
-    fig_hist.add_trace(go.Histogram(
-        x=lengths,
-        nbinsx=50,
-        marker_color=color, opacity=0.85,
-        histnorm="probability density",
-        name="Chord lengths",
-    ))
-
-    fig_hist.add_vline(
-        x=SIDE_LENGTH, line_dash="dash", line_color="white", line_width=2,
-        annotation_text=f"√3 ≈ {SIDE_LENGTH:.3f}",
-        annotation_font_color="white", annotation_font_size=11,
-        annotation_position="top left"
-    )
-
-    # Shade favorable region
-    fig_hist.add_vrect(
-        x0=SIDE_LENGTH, x1=2.0,
-        fillcolor=color, opacity=0.08,
-        layer="below", line_width=0,
-    )
-
-    fig_hist.update_layout(
+with c2:
+    f = go.Figure()
+    f.add_trace(go.Histogram(x=lengths, nbinsx=50, marker_color=color,
+                opacity=0.85, histnorm="probability density"))
+    f.add_vline(x=SIDE_LENGTH, line_dash="dash", line_color="white",
+                annotation_text=f"√3 ≈ {SIDE_LENGTH:.3f}",
+                annotation_font_color="white", annotation_position="top left")
+    f.add_vrect(x0=SIDE_LENGTH, x1=2.0, fillcolor=color, opacity=0.08,
+                layer="below", line_width=0)
+    f.update_layout(
         title=dict(text="<b>Chord Length Distribution</b>",
                    font=dict(color="white", size=14), x=0.5),
-        paper_bgcolor="#0d0d0d", plot_bgcolor="#0d0d0d",
-        height=220, margin=dict(l=40, r=20, t=40, b=30),
-        xaxis=dict(title="Chord Length", color="#999",
-                   gridcolor="#1a1a1a", showline=True, linecolor="#444",
+        paper_bgcolor="#0d0d0d", plot_bgcolor="#0d0d0d", height=300,
+        margin=dict(l=40, r=20, t=40, b=30),
+        xaxis=dict(title="Chord Length", color="#999", gridcolor="#1a1a1a",
                    range=[0, 2.05]),
-        yaxis=dict(title="Density", color="#999",
-                   gridcolor="#1a1a1a", showline=True, linecolor="#444"),
-        legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(color="white", size=10)),
-        showlegend=False,
-        font=dict(color="#999"),
-    )
-
-    st.plotly_chart(fig_hist, use_container_width=True)
+        yaxis=dict(title="Density", color="#999", gridcolor="#1a1a1a"),
+        showlegend=False, font=dict(color="#999"))
+    st.plotly_chart(f, use_container_width=True, key="hist")
 
 # ─────────────────────────────────────────────
-# COMPARISON TABLE (all 3 methods at once)
+# COMPARISON BAR (all 3 methods)
 # ─────────────────────────────────────────────
 st.markdown("---")
 st.markdown("### 📊 All Three Methods — Side by Side")
 
-rng2 = np.random.default_rng(seed)
-comparison_data = {}
-for mname, mfunc in METHODS.items():
-    rng2 = np.random.default_rng(seed)
-    _, _, _, _, lens = mfunc(n_chords, rng2)
-    fav  = lens > SIDE_LENGTH
-    comparison_data[mname] = {
-        "color":    METHOD_INFO[mname]["color"],
-        "prob":     fav.mean(),
-        "theory":   METHOD_INFO[mname]["theory"],
-        "error":    abs(fav.mean() - METHOD_INFO[mname]["theory"]),
-    }
+names, sim_p, colors = [], [], []
+for m, fn in METHODS.items():
+    r2 = np.random.default_rng(seed)
+    *_, lens = fn(n_chords, r2)
+    names.append(m)
+    sim_p.append((lens > SIDE_LENGTH).mean())
+    colors.append(METHOD_INFO[m]["color"])
+theo_p = [METHOD_INFO[m]["theory"] for m in names]
 
-# Bar chart comparing all 3
-fig_bar = go.Figure()
-
-mnames  = list(comparison_data.keys())
-sim_p   = [comparison_data[m]["prob"]   for m in mnames]
-theo_p  = [comparison_data[m]["theory"] for m in mnames]
-colors  = [comparison_data[m]["color"]  for m in mnames]
-
-fig_bar.add_trace(go.Bar(
-    x=mnames, y=sim_p,
-    name="Simulated",
-    marker_color=colors,
-    opacity=0.9,
-    text=[f"{p:.4f}" for p in sim_p],
-    textposition="outside",
-    textfont=dict(color="white", size=12)
-))
-
-fig_bar.add_trace(go.Bar(
-    x=mnames, y=theo_p,
-    name="Theoretical",
-    marker_color=colors,
-    opacity=0.35,
-    text=[f"{p:.4f}" for p in theo_p],
-    textposition="outside",
-    textfont=dict(color="#aaa", size=12)
-))
-
-# Add theory lines
-for i, (m, p) in enumerate(zip(mnames, theo_p)):
-    fig_bar.add_shape(type="line",
-        x0=i-0.4, x1=i+0.4, y0=p, y1=p,
-        line=dict(color="white", width=1.5, dash="dot"))
-
-fig_bar.update_layout(
-    paper_bgcolor="#0d0d0d", plot_bgcolor="#0d0d0d",
-    height=320, barmode="group",
-    margin=dict(l=20, r=20, t=20, b=20),
-    xaxis=dict(color="#ccc", gridcolor="#1a1a1a", tickfont=dict(size=13)),
+fbar = go.Figure()
+fbar.add_trace(go.Bar(x=names, y=sim_p, marker_color=colors, opacity=0.9,
+               name="Simulated", text=[f"{p:.4f}" for p in sim_p],
+               textposition="outside", textfont=dict(color="white", size=13)))
+fbar.add_trace(go.Bar(x=names, y=theo_p, marker_color=colors, opacity=0.35,
+               name="Theoretical", text=[f"{p:.4f}" for p in theo_p],
+               textposition="outside", textfont=dict(color="#aaa", size=13)))
+fbar.update_layout(
+    paper_bgcolor="#0d0d0d", plot_bgcolor="#0d0d0d", height=340,
+    barmode="group", margin=dict(l=20, r=20, t=20, b=20),
+    xaxis=dict(color="#ccc", tickfont=dict(size=13)),
     yaxis=dict(title="Probability", color="#999", gridcolor="#1a1a1a",
                range=[0, 0.72]),
     legend=dict(font=dict(color="white"), bgcolor="rgba(0,0,0,0)"),
-    font=dict(color="#999"),
-)
-
-st.plotly_chart(fig_bar, use_container_width=True)
+    font=dict(color="#999"))
+st.plotly_chart(fbar, use_container_width=True, key="bar")
 
 # ─────────────────────────────────────────────
 # FOOTER
 # ─────────────────────────────────────────────
-st.markdown("""
-<div style="text-align:center; color:#444; font-size:0.8rem; margin-top:30px; padding-bottom:20px;">
-    Bertrand's Paradox (1889) · PnS Project — Group 8 · SVyasa University<br>
-    Circle r = 1 &nbsp;|&nbsp; Threshold = √3 ≈ 1.732 &nbsp;|&nbsp; Inscribed equilateral triangle side
-</div>
-""", unsafe_allow_html=True)
+st.markdown(
+    "<div style='text-align:center;color:#444;font-size:0.8rem;margin-top:30px;'>"
+    "Bertrand's Paradox (1889) · Probability &amp; Statistics · Group 8<br>"
+    "Circle r = 1 | Threshold √3 ≈ 1.732 | Inscribed equilateral triangle side"
+    "</div>", unsafe_allow_html=True)
